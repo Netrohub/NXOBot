@@ -1,0 +1,25 @@
+{
+  "name": "nxobot",
+  "version": "1.0.0",
+  "description": "Discord bot for NXOLand marketplace - sends new listing notifications to Discord channels",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "marketplace",
+    "nxoland"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1"
+  }
+}
+
