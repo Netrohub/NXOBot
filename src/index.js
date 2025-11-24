@@ -208,7 +208,54 @@ function startWebhookServer() {
   const app = express();
   app.use(express.json());
 
-  // Webhook endpoint for listing notifications
+  // Unified webhook endpoint for all events (disputes, listings, etc.)
+  app.post('/webhook', async (req, res) => {
+    // Verify webhook secret if configured
+    if (WEBHOOK_SECRET) {
+      const authHeader = req.headers['x-webhook-secret'];
+      if (authHeader !== WEBHOOK_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    }
+
+    try {
+      const { event_type, data } = req.body;
+
+      if (!event_type || !data) {
+        return res.status(400).json({ error: 'Invalid event format. Expected event_type and data' });
+      }
+
+      // Route to appropriate handler based on event type
+      switch (event_type) {
+        case 'listing.created':
+          await handleListingCreated(data);
+          break;
+        case 'listing.updated':
+        case 'listing.status_changed':
+          await handleListingUpdated(data);
+          break;
+        case 'dispute.created':
+          await handleDisputeCreated(data);
+          break;
+        case 'dispute.updated':
+          await handleDisputeUpdated(data);
+          break;
+        case 'dispute.resolved':
+          await handleDisputeResolved(data);
+          break;
+        default:
+          console.log(`Unknown event type: ${event_type}`);
+          return res.status(400).json({ error: `Unknown event type: ${event_type}` });
+      }
+
+      res.json({ success: true, event_type });
+    } catch (error) {
+      console.error('Webhook error:', error);
+      res.status(500).json({ error: 'Internal server error', message: error.message });
+    }
+  });
+
+  // Legacy endpoint for backward compatibility
   app.post('/webhook/listing', async (req, res) => {
     // Verify webhook secret if configured
     if (WEBHOOK_SECRET) {
@@ -294,6 +341,166 @@ function startWebhookServer() {
     }
   });
 
+  // Event handlers
+  async function handleListingCreated(listing) {
+    const config = loadConfig();
+    let sentCount = 0;
+
+    for (const [guildId, guildConfig] of Object.entries(config)) {
+      const channelId = guildConfig.channelId;
+      if (!channelId) continue;
+
+      try {
+        const discordChannel = await client.channels.fetch(channelId);
+        
+        const embed = new EmbedBuilder()
+          .setTitle('🆕 New Listing Available!')
+          .setDescription(`**${listing.title || 'Untitled'}**`)
+          .addFields(
+            { name: '💰 Price', value: `$${parseFloat(listing.price || 0).toFixed(2)}`, inline: true },
+            { name: '📂 Category', value: listing.category || 'N/A', inline: true },
+          )
+          .setColor(0x00AE86)
+          .setTimestamp(new Date(listing.created_at || Date.now()))
+          .setFooter({ text: 'NXOLand Marketplace' });
+
+        if (listing.description) {
+          const description = listing.description.length > 1000 
+            ? listing.description.substring(0, 997) + '...' 
+            : listing.description;
+          embed.addFields({ name: '📝 Description', value: description });
+        }
+
+        if (listing.images && Array.isArray(listing.images) && listing.images.length > 0) {
+          embed.setImage(listing.images[0]);
+        }
+
+        const listingUrl = `${FRONTEND_URL}/product/${listing.listing_id}`;
+        embed.setURL(listingUrl);
+        embed.addFields({ name: '🔗 View Listing', value: `[Click here to view](${listingUrl})` });
+
+        await discordChannel.send({ embeds: [embed] });
+        sentCount++;
+      } catch (error) {
+        console.error(`Error sending listing to channel ${channelId}:`, error);
+      }
+    }
+
+    console.log(`✅ Listing created event processed. Sent to ${sentCount} channel(s)`);
+  }
+
+  async function handleListingUpdated(listing) {
+    // Handle listing updates (optional - you may not want to notify on every update)
+    console.log('📝 Listing updated:', listing.listing_id);
+  }
+
+  async function handleDisputeCreated(dispute) {
+    const config = loadConfig();
+    
+    for (const [guildId, guildConfig] of Object.entries(config)) {
+      const channelId = guildConfig.channelId;
+      if (!channelId) continue;
+
+      try {
+        const discordChannel = await client.channels.fetch(channelId);
+        
+        // Create a thread for the dispute
+        const thread = await discordChannel.threads.create({
+          name: `Dispute #${dispute.dispute_id} - Order #${dispute.order_id}`,
+          autoArchiveDuration: 1440, // 24 hours
+          reason: 'New dispute created',
+        });
+
+        // Mention buyer and seller if they have Discord IDs
+        let mentions = [];
+        if (dispute.buyer_discord_id) {
+          mentions.push(`<@${dispute.buyer_discord_id}>`);
+        }
+        if (dispute.seller_discord_id) {
+          mentions.push(`<@${dispute.seller_discord_id}>`);
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle(`⚠️ New Dispute Created`)
+          .setDescription(`**Dispute #${dispute.dispute_id}**`)
+          .addFields(
+            { name: '📦 Order ID', value: `#${dispute.order_id}`, inline: true },
+            { name: '👤 Initiated By', value: dispute.party === 'buyer' ? 'Buyer' : 'Seller', inline: true },
+            { name: '📋 Reason', value: dispute.reason || 'N/A' },
+            { name: '📝 Description', value: dispute.description || 'No description provided' },
+            { name: '🆔 Buyer Discord', value: dispute.buyer_discord_id ? `<@${dispute.buyer_discord_id}>` : 'Not connected', inline: true },
+            { name: '🆔 Seller Discord', value: dispute.seller_discord_id ? `<@${dispute.seller_discord_id}>` : 'Not connected', inline: true },
+          )
+          .setColor(0xFF6B6B)
+          .setTimestamp(new Date(dispute.created_at || Date.now()))
+          .setFooter({ text: 'NXOLand Dispute System' });
+
+        const mentionText = mentions.length > 0 ? `${mentions.join(' ')}\n\n` : '';
+        await thread.send({
+          content: mentionText,
+          embeds: [embed],
+        });
+
+        console.log(`✅ Dispute #${dispute.dispute_id} thread created in channel ${channelId}`);
+      } catch (error) {
+        console.error(`Error creating dispute thread in channel ${channelId}:`, error);
+      }
+    }
+  }
+
+  async function handleDisputeUpdated(dispute) {
+    // Handle dispute updates (status changes, etc.)
+    console.log(`📝 Dispute #${dispute.dispute_id} updated:`, dispute.status);
+    // You can add logic here to update the thread with status changes
+  }
+
+  async function handleDisputeResolved(dispute) {
+    const config = loadConfig();
+    
+    for (const [guildId, guildConfig] of Object.entries(config)) {
+      const channelId = guildConfig.channelId;
+      if (!channelId) continue;
+
+      try {
+        const discordChannel = await client.channels.fetch(channelId);
+        
+        // Find existing thread (you may need to store thread IDs)
+        // For now, we'll send a message to the channel
+        const embed = new EmbedBuilder()
+          .setTitle(`✅ Dispute Resolved`)
+          .setDescription(`**Dispute #${dispute.dispute_id}** has been resolved`)
+          .addFields(
+            { name: '📦 Order ID', value: `#${dispute.order_id}`, inline: true },
+            { name: '⚖️ Resolution', value: dispute.resolution || 'N/A', inline: true },
+            { name: '👤 Resolved By', value: dispute.resolver_username || 'Admin', inline: true },
+            { name: '📝 Notes', value: dispute.resolution_notes || 'No notes provided' },
+          )
+          .setColor(0x51CF66)
+          .setTimestamp(new Date(dispute.resolved_at || Date.now()))
+          .setFooter({ text: 'NXOLand Dispute System' });
+
+        // Mention parties
+        let mentions = [];
+        if (dispute.buyer_discord_id) {
+          mentions.push(`<@${dispute.buyer_discord_id}>`);
+        }
+        if (dispute.seller_discord_id) {
+          mentions.push(`<@${dispute.seller_discord_id}>`);
+        }
+
+        const mentionText = mentions.length > 0 ? `${mentions.join(' ')}\n\n` : '';
+        await discordChannel.send({
+          content: mentionText,
+          embeds: [embed],
+        });
+
+        console.log(`✅ Dispute #${dispute.dispute_id} resolution posted to channel ${channelId}`);
+      } catch (error) {
+        console.error(`Error posting dispute resolution to channel ${channelId}:`, error);
+      }
+    }
+  }
+
   // Health check endpoint
   app.get('/health', (req, res) => {
     res.json({ 
@@ -305,7 +512,8 @@ function startWebhookServer() {
 
   app.listen(PORT, () => {
     console.log(`🚀 Webhook server running on port ${PORT}`);
-    console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook/listing`);
+    console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook`);
+    console.log(`📡 Legacy endpoint: http://localhost:${PORT}/webhook/listing`);
   });
 }
 
