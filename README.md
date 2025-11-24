@@ -26,9 +26,14 @@ A Discord bot that automatically posts new listings from the NXOLand marketplace
    - `bot`
    - `applications.commands`
 9. Select bot permissions:
-   - Send Messages
-   - Embed Links
-   - Attach Files (if you want image previews)
+   - **Send Messages** - Post listings and dispute notifications
+   - **Embed Links** - Send rich embeds with listing details
+   - **Attach Files** - Show listing images
+   - **Read Message History** - Required to create threads
+   - **Create Public Threads** - Create dispute threads (REQUIRED for disputes)
+   - **Send Messages in Threads** - Post in dispute threads
+   - **Use External Emojis** - Use emojis in messages (optional)
+   - **View Channels** - See channels in your server
 10. Copy the generated URL and open it in your browser to invite the bot to your server(s)
 
 ### 2. Install Dependencies
