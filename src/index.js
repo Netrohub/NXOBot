@@ -346,6 +346,17 @@ function startWebhookServer() {
     const config = loadConfig();
     let sentCount = 0;
 
+    // Handle both new format (from ListingEventEmitter) and legacy format
+    // New format has: listing_id, title, category, price, status, created_at
+    // Legacy format has: id, title, description, price, category, images, created_at
+    const listingId = listing.listing_id || listing.id;
+    const title = listing.title || 'Untitled';
+    const price = listing.price || 0;
+    const category = listing.category || 'N/A';
+    const description = listing.description || null;
+    const images = listing.images || [];
+    const createdAt = listing.created_at || new Date().toISOString();
+
     for (const [guildId, guildConfig] of Object.entries(config)) {
       const channelId = guildConfig.channelId;
       if (!channelId) continue;
@@ -355,27 +366,30 @@ function startWebhookServer() {
         
         const embed = new EmbedBuilder()
           .setTitle('🆕 New Listing Available!')
-          .setDescription(`**${listing.title || 'Untitled'}**`)
+          .setDescription(`**${title}**`)
           .addFields(
-            { name: '💰 Price', value: `$${parseFloat(listing.price || 0).toFixed(2)}`, inline: true },
-            { name: '📂 Category', value: listing.category || 'N/A', inline: true },
+            { name: '💰 Price', value: `$${parseFloat(price).toFixed(2)}`, inline: true },
+            { name: '📂 Category', value: category, inline: true },
           )
-          .setColor(0x00AE86)
-          .setTimestamp(new Date(listing.created_at || Date.now()))
+          .setColor(0x00AE86) // NXOLand brand color (teal/green)
+          .setTimestamp(new Date(createdAt))
           .setFooter({ text: 'NXOLand Marketplace' });
 
-        if (listing.description) {
-          const description = listing.description.length > 1000 
-            ? listing.description.substring(0, 997) + '...' 
-            : listing.description;
-          embed.addFields({ name: '📝 Description', value: description });
+        // Add description if available (truncate if too long)
+        if (description) {
+          const truncatedDescription = description.length > 1000 
+            ? description.substring(0, 997) + '...' 
+            : description;
+          embed.addFields({ name: '📝 Description', value: truncatedDescription });
         }
 
-        if (listing.images && Array.isArray(listing.images) && listing.images.length > 0) {
-          embed.setImage(listing.images[0]);
+        // Add first image if available
+        if (images && Array.isArray(images) && images.length > 0) {
+          embed.setImage(images[0]);
         }
 
-        const listingUrl = `${FRONTEND_URL}/product/${listing.listing_id}`;
+        // Add link to view listing
+        const listingUrl = `${FRONTEND_URL}/product/${listingId}`;
         embed.setURL(listingUrl);
         embed.addFields({ name: '🔗 View Listing', value: `[Click here to view](${listingUrl})` });
 
