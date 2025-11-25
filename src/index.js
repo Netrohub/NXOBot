@@ -46,7 +46,7 @@ function saveConfig(config) {
   }
 }
 
-// Get channel ID for a guild (general or category-specific)
+// Get channel ID for a guild (general or category-specific) - for LISTINGS
 function getChannelId(guildId, category = null) {
   const config = loadConfig();
   if (!config[guildId]) return null;
@@ -60,7 +60,7 @@ function getChannelId(guildId, category = null) {
   return config[guildId].channelId || null;
 }
 
-// Set channel ID for a guild (general or category-specific)
+// Set channel ID for a guild (general or category-specific) - for LISTINGS
 function setChannelId(guildId, channelId, category = null) {
   const config = loadConfig();
   if (!config[guildId]) {
@@ -76,6 +76,46 @@ function setChannelId(guildId, channelId, category = null) {
   } else {
     // Set general channel
     config[guildId].channelId = channelId;
+  }
+  
+  saveConfig(config);
+}
+
+// Get dispute channel ID for a guild (general or category-specific) - for DISPUTES
+function getDisputeChannelId(guildId, category = null) {
+  const config = loadConfig();
+  if (!config[guildId]) return null;
+  
+  // If category is specified, try to get category-specific dispute channel
+  if (category && config[guildId].disputeChannels && config[guildId].disputeChannels[category]) {
+    return config[guildId].disputeChannels[category];
+  }
+  
+  // Fallback to general dispute channel
+  if (config[guildId].disputeChannelId) {
+    return config[guildId].disputeChannelId;
+  }
+  
+  // Last fallback: use listing channel if no dispute channel is set
+  return getChannelId(guildId, category);
+}
+
+// Set dispute channel ID for a guild (general or category-specific) - for DISPUTES
+function setDisputeChannelId(guildId, channelId, category = null) {
+  const config = loadConfig();
+  if (!config[guildId]) {
+    config[guildId] = {};
+  }
+  
+  if (category) {
+    // Set category-specific dispute channel
+    if (!config[guildId].disputeChannels) {
+      config[guildId].disputeChannels = {};
+    }
+    config[guildId].disputeChannels[category] = channelId;
+  } else {
+    // Set general dispute channel
+    config[guildId].disputeChannelId = channelId;
   }
   
   saveConfig(config);
@@ -158,6 +198,52 @@ const commands = [
         name: 'category',
         type: 3, // STRING
         description: 'Category to remove channel for (optional)',
+        required: false,
+        choices: [
+          { name: 'Whiteout Survival', value: 'wos_accounts' },
+          { name: 'KingShot', value: 'kingshot_accounts' },
+          { name: 'PUBG Mobile', value: 'pubg_accounts' },
+          { name: 'Fortnite', value: 'fortnite_accounts' },
+          { name: 'TikTok', value: 'tiktok_accounts' },
+          { name: 'Instagram', value: 'instagram_accounts' },
+        ],
+      },
+    ],
+  },
+  {
+    name: 'setdisputechannel',
+    description: 'Set the channel where dispute threads will be created',
+    options: [
+      {
+        name: 'channel',
+        type: 7, // CHANNEL
+        description: 'The channel to create dispute threads in',
+        required: true,
+      },
+      {
+        name: 'category',
+        type: 3, // STRING
+        description: 'Category for category-specific dispute channel (optional)',
+        required: false,
+        choices: [
+          { name: 'Whiteout Survival', value: 'wos_accounts' },
+          { name: 'KingShot', value: 'kingshot_accounts' },
+          { name: 'PUBG Mobile', value: 'pubg_accounts' },
+          { name: 'Fortnite', value: 'fortnite_accounts' },
+          { name: 'TikTok', value: 'tiktok_accounts' },
+          { name: 'Instagram', value: 'instagram_accounts' },
+        ],
+      },
+    ],
+  },
+  {
+    name: 'getdisputechannel',
+    description: 'Get the current dispute channel configuration',
+    options: [
+      {
+        name: 'category',
+        type: 3, // STRING
+        description: 'Category to get dispute channel for (optional)',
         required: false,
         choices: [
           { name: 'Whiteout Survival', value: 'wos_accounts' },
@@ -327,6 +413,65 @@ client.on('interactionCreate', async (interaction) => {
           ephemeral: true,
         });
       }
+    }
+  } else if (commandName === 'setdisputechannel') {
+    const targetChannel = interaction.options.getChannel('channel');
+    const category = interaction.options.getString('category');
+
+    if (!targetChannel) {
+      return interaction.reply({
+        content: '❌ Please specify a valid channel.',
+        ephemeral: true,
+      });
+    }
+
+    // Check if bot has permission to send messages and create threads in the channel
+    const permissions = targetChannel.permissionsFor(client.user);
+    if (!permissions || !permissions.has('SendMessages')) {
+      return interaction.reply({
+        content: `❌ I don't have permission to send messages in ${targetChannel}. Please check my permissions.`,
+        ephemeral: true,
+      });
+    }
+
+    setDisputeChannelId(guildId, targetChannel.id, category);
+    const categoryText = category ? ` for ${getCategoryName(category)}` : '';
+
+    await interaction.reply({
+      content: `✅ Dispute channel set to ${targetChannel}${categoryText}. Dispute threads will be created here.`,
+      ephemeral: true,
+    });
+
+    // Send a test message to confirm
+    try {
+      await targetChannel.send(`🎉 **Dispute channel configured${categoryText}!** Dispute threads will be created here.`);
+    } catch (error) {
+      console.error('Error sending test message:', error);
+    }
+  } else if (commandName === 'getdisputechannel') {
+    const category = interaction.options.getString('category');
+    const channelId = getDisputeChannelId(guildId, category);
+
+    if (!channelId) {
+      const categoryText = category ? ` for ${getCategoryName(category)}` : '';
+      return interaction.reply({
+        content: `❌ No dispute channel is configured${categoryText}. Use \`/setdisputechannel\` to set one.`,
+        ephemeral: true,
+      });
+    }
+
+    try {
+      const targetChannel = await client.channels.fetch(channelId);
+      const categoryText = category ? ` (${getCategoryName(category)})` : '';
+      await interaction.reply({
+        content: `✅ Current dispute channel${categoryText}: ${targetChannel}`,
+        ephemeral: true,
+      });
+    } catch (error) {
+      await interaction.reply({
+        content: `⚠️ Dispute channel ID is set (${channelId}) but I cannot access it. It may have been deleted. Use \`/setdisputechannel\` to update.`,
+        ephemeral: true,
+      });
     }
   }
 });
@@ -557,10 +702,10 @@ function startWebhookServer() {
     const category = dispute.category || null;
     
     for (const [guildId, guildConfig] of Object.entries(config)) {
-      // Get category-specific channel or fallback to general channel
-      const channelId = getChannelId(guildId, category);
+      // Get category-specific DISPUTE channel or fallback to general dispute channel
+      const channelId = getDisputeChannelId(guildId, category);
       if (!channelId) {
-        console.log(`⚠️ No channel configured for category ${category} in guild ${guildId}`);
+        console.log(`⚠️ No dispute channel configured for category ${category} in guild ${guildId}`);
         continue;
       }
 
@@ -606,13 +751,40 @@ function startWebhookServer() {
           }
         }
 
-        // Mention buyer and seller if they have Discord IDs
+        // Get guild to find admin role
+        const guild = discordChannel.guild;
+        let adminMention = '';
+        
+        // Try to find admin role (common names: Admin, Administrators, Staff, Mod, Moderator)
+        const adminRoleNames = ['Admin', 'Administrators', 'Staff', 'Mod', 'Moderator', 'أدمن', 'إدارة'];
+        let adminRole = null;
+        
+        for (const roleName of adminRoleNames) {
+          adminRole = guild.roles.cache.find(role => 
+            role.name.toLowerCase().includes(roleName.toLowerCase()) || 
+            role.name.toLowerCase() === roleName.toLowerCase()
+          );
+          if (adminRole) break;
+        }
+        
+        // If no admin role found, use @everyone (you can change this to a specific role ID)
+        if (adminRole) {
+          adminMention = `<@&${adminRole.id}>`;
+        } else {
+          // Fallback: mention everyone (you might want to set a specific admin role ID instead)
+          adminMention = '@everyone';
+        }
+
+        // Mention buyer, seller, and admins
         let mentions = [];
         if (dispute.buyer_discord_id) {
           mentions.push(`<@${dispute.buyer_discord_id}>`);
         }
         if (dispute.seller_discord_id) {
           mentions.push(`<@${dispute.seller_discord_id}>`);
+        }
+        if (adminMention) {
+          mentions.push(adminMention);
         }
 
         const embed = new EmbedBuilder()
@@ -662,26 +834,127 @@ function startWebhookServer() {
 
   async function handleDisputeResolved(dispute) {
     const config = loadConfig();
+    const category = dispute.category || null;
     
+    // Try to find and send message to the existing thread
+    if (dispute.discord_thread_id && dispute.discord_channel_id) {
+      try {
+        // Fetch the thread directly
+        const thread = await client.channels.fetch(dispute.discord_thread_id);
+        
+        if (thread && thread.isThread()) {
+          // Get guild to find admin role
+          const guild = thread.guild;
+          let adminMention = '';
+          
+          // Try to find admin role
+          const adminRoleNames = ['Admin', 'Administrators', 'Staff', 'Mod', 'Moderator', 'أدمن', 'إدارة'];
+          let adminRole = null;
+          
+          for (const roleName of adminRoleNames) {
+            adminRole = guild.roles.cache.find(role => 
+              role.name.toLowerCase().includes(roleName.toLowerCase()) || 
+              role.name.toLowerCase() === roleName.toLowerCase()
+            );
+            if (adminRole) break;
+          }
+          
+          if (adminRole) {
+            adminMention = `<@&${adminRole.id}>`;
+          }
+
+          // Determine resolution message
+          let resolutionText = '';
+          let resolutionColor = 0x51CF66; // Green
+          
+          if (dispute.resolution === 'buyer') {
+            resolutionText = '✅ **Resolved in favor of BUYER**';
+            resolutionColor = 0x4A90E2; // Blue
+          } else if (dispute.resolution === 'seller') {
+            resolutionText = '✅ **Resolved in favor of SELLER**';
+            resolutionColor = 0xFFA500; // Orange
+          } else if (dispute.resolution === 'refund') {
+            resolutionText = '✅ **Resolved: REFUND**';
+            resolutionColor = 0x51CF66; // Green
+          } else {
+            resolutionText = '✅ **Dispute Resolved**';
+          }
+
+          const embed = new EmbedBuilder()
+            .setTitle(`✅ Dispute Resolved`)
+            .setDescription(`**Dispute #${dispute.dispute_id}** has been resolved`)
+            .addFields(
+              { name: '📦 Order ID', value: `#${dispute.order_id}`, inline: true },
+              { name: '⚖️ Resolution', value: resolutionText, inline: false },
+              { name: '👤 Resolved By', value: dispute.resolver_username || 'Admin', inline: true },
+              { name: '📝 Resolution Notes', value: dispute.resolution_notes || 'No notes provided', inline: false },
+            )
+            .setColor(resolutionColor)
+            .setTimestamp(new Date(dispute.resolved_at || Date.now()))
+            .setFooter({ text: 'NXOLand Dispute System' });
+
+          // Mention buyer, seller, and admins
+          let mentions = [];
+          if (dispute.buyer_discord_id) {
+            mentions.push(`<@${dispute.buyer_discord_id}>`);
+          }
+          if (dispute.seller_discord_id) {
+            mentions.push(`<@${dispute.seller_discord_id}>`);
+          }
+          if (adminMention) {
+            mentions.push(adminMention);
+          }
+
+          const mentionText = mentions.length > 0 ? `${mentions.join(' ')}\n\n` : '';
+          await thread.send({
+            content: mentionText + resolutionText,
+            embeds: [embed],
+          });
+
+          console.log(`✅ Dispute #${dispute.dispute_id} resolution posted to thread ${dispute.discord_thread_id}`);
+          return; // Success, exit early
+        }
+      } catch (error) {
+        console.error(`Error posting to thread ${dispute.discord_thread_id}:`, error.message);
+        // Fall through to channel fallback
+      }
+    }
+    
+    // Fallback: Send to dispute channel if thread not found
     for (const [guildId, guildConfig] of Object.entries(config)) {
-      const channelId = guildConfig.channelId;
+      const channelId = getDisputeChannelId(guildId, category);
       if (!channelId) continue;
 
       try {
         const discordChannel = await client.channels.fetch(channelId);
         
-        // Find existing thread (you may need to store thread IDs)
-        // For now, we'll send a message to the channel
+        // Determine resolution message
+        let resolutionText = '';
+        let resolutionColor = 0x51CF66;
+        
+        if (dispute.resolution === 'buyer') {
+          resolutionText = '✅ **Resolved in favor of BUYER**';
+          resolutionColor = 0x4A90E2;
+        } else if (dispute.resolution === 'seller') {
+          resolutionText = '✅ **Resolved in favor of SELLER**';
+          resolutionColor = 0xFFA500;
+        } else if (dispute.resolution === 'refund') {
+          resolutionText = '✅ **Resolved: REFUND**';
+          resolutionColor = 0x51CF66;
+        } else {
+          resolutionText = '✅ **Dispute Resolved**';
+        }
+
         const embed = new EmbedBuilder()
           .setTitle(`✅ Dispute Resolved`)
           .setDescription(`**Dispute #${dispute.dispute_id}** has been resolved`)
           .addFields(
             { name: '📦 Order ID', value: `#${dispute.order_id}`, inline: true },
-            { name: '⚖️ Resolution', value: dispute.resolution || 'N/A', inline: true },
+            { name: '⚖️ Resolution', value: resolutionText, inline: false },
             { name: '👤 Resolved By', value: dispute.resolver_username || 'Admin', inline: true },
-            { name: '📝 Notes', value: dispute.resolution_notes || 'No notes provided' },
+            { name: '📝 Notes', value: dispute.resolution_notes || 'No notes provided', inline: false },
           )
-          .setColor(0x51CF66)
+          .setColor(resolutionColor)
           .setTimestamp(new Date(dispute.resolved_at || Date.now()))
           .setFooter({ text: 'NXOLand Dispute System' });
 
@@ -700,7 +973,7 @@ function startWebhookServer() {
           embeds: [embed],
         });
 
-        console.log(`✅ Dispute #${dispute.dispute_id} resolution posted to channel ${channelId}`);
+        console.log(`✅ Dispute #${dispute.dispute_id} resolution posted to channel ${channelId} (fallback)`);
       } catch (error) {
         console.error(`Error posting dispute resolution to channel ${channelId}:`, error);
       }
