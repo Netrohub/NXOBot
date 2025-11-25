@@ -612,11 +612,12 @@ function startWebhookServer() {
 
         console.log(`✅ Dispute #${dispute.dispute_id} thread created in channel ${channelId} (thread ID: ${thread.id})`);
         
-        // Return thread ID and channel ID to backend (via webhook response)
+        // Return thread ID, channel ID, and guild ID to backend (via webhook response)
         // The backend will need to handle this response
         return {
           thread_id: thread.id,
           channel_id: channelId,
+          guild_id: guildId,
           thread_url: `https://discord.com/channels/${guildId}/${thread.id}`,
         };
       } catch (error) {
