@@ -117,7 +117,7 @@ const commands = [
       {
         name: 'category',
         type: 3, // STRING
-        description: 'Category for category-specific channel (wos_accounts, kingshot_accounts, pubg_accounts, fortnite_accounts)',
+        description: 'Category for category-specific channel (optional)',
         required: false,
         choices: [
           { name: 'Whiteout Survival', value: 'wos_accounts' },
@@ -137,7 +137,7 @@ const commands = [
       {
         name: 'category',
         type: 3, // STRING
-        description: 'Category to get channel for',
+        description: 'Category to get channel for (optional)',
         required: false,
         choices: [
           { name: 'Whiteout Survival', value: 'wos_accounts' },
@@ -157,7 +157,7 @@ const commands = [
       {
         name: 'category',
         type: 3, // STRING
-        description: 'Category to remove channel for',
+        description: 'Category to remove channel for (optional)',
         required: false,
         choices: [
           { name: 'Whiteout Survival', value: 'wos_accounts' },
@@ -185,15 +185,42 @@ client.once('ready', async () => {
     
     const clientId = client.user.id;
     
-    // Register commands globally (takes up to 1 hour to propagate)
-    await rest.put(
-      Routes.applicationCommands(clientId),
-      { body: commands }
-    );
+    // Register commands in each guild (faster than global, updates immediately)
+    // Also register globally as fallback
+    const guilds = client.guilds.cache;
+    
+    // Register in each guild for immediate updates
+    for (const [guildId, guild] of guilds) {
+      try {
+        await rest.put(
+          Routes.applicationGuildCommands(clientId, guildId),
+          { body: commands }
+        );
+        console.log(`✅ Registered commands in guild: ${guild.name} (${guildId})`);
+      } catch (error) {
+        console.error(`❌ Error registering commands in guild ${guildId}:`, error.message);
+      }
+    }
+    
+    // Also register globally (for new servers the bot joins)
+    try {
+      await rest.put(
+        Routes.applicationCommands(clientId),
+        { body: commands }
+      );
+      console.log(`✅ Registered commands globally (for new servers)`);
+    } catch (error) {
+      console.error('❌ Error registering commands globally:', error.message);
+    }
 
+    // Verify commands
     const commandsData = await rest.get(Routes.applicationCommands(clientId));
-    console.log(`✅ Registered ${commandsData.length} command(s) globally`);
-    console.log('   Commands:', commandsData.map(cmd => `/${cmd.name}`).join(', '));
+    console.log(`✅ Total registered commands: ${commandsData.length}`);
+    console.log('   Commands:', commandsData.map(cmd => {
+      const options = cmd.options || [];
+      const categoryOption = options.find(opt => opt.name === 'category');
+      return `/${cmd.name}${categoryOption ? ' [category]' : ''}`;
+    }).join(', '));
   } catch (error) {
     console.error('❌ Error registering commands:', error);
   }
