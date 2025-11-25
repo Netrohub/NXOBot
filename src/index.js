@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, REST, Routes, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, EmbedBuilder, ChannelType } from 'discord.js';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -46,20 +46,52 @@ function saveConfig(config) {
   }
 }
 
-// Get channel ID for a guild
-function getChannelId(guildId) {
+// Get channel ID for a guild (general or category-specific)
+function getChannelId(guildId, category = null) {
   const config = loadConfig();
-  return config[guildId]?.channelId || null;
+  if (!config[guildId]) return null;
+  
+  // If category is specified, try to get category-specific channel
+  if (category && config[guildId].categoryChannels && config[guildId].categoryChannels[category]) {
+    return config[guildId].categoryChannels[category];
+  }
+  
+  // Fallback to general channel
+  return config[guildId].channelId || null;
 }
 
-// Set channel ID for a guild
-function setChannelId(guildId, channelId) {
+// Set channel ID for a guild (general or category-specific)
+function setChannelId(guildId, channelId, category = null) {
   const config = loadConfig();
   if (!config[guildId]) {
     config[guildId] = {};
   }
-  config[guildId].channelId = channelId;
+  
+  if (category) {
+    // Set category-specific channel
+    if (!config[guildId].categoryChannels) {
+      config[guildId].categoryChannels = {};
+    }
+    config[guildId].categoryChannels[category] = channelId;
+  } else {
+    // Set general channel
+    config[guildId].channelId = channelId;
+  }
+  
   saveConfig(config);
+}
+
+// Get category name from category code
+function getCategoryName(category) {
+  const categoryMap = {
+    'wos_accounts': 'Whiteout Survival',
+    'kingshot_accounts': 'KingShot',
+    'pubg_accounts': 'PUBG Mobile',
+    'fortnite_accounts': 'Fortnite',
+    'tiktok_accounts': 'TikTok',
+    'instagram_accounts': 'Instagram',
+  };
+  return categoryMap[category] || category;
 }
 
 // Create Discord client
@@ -82,15 +114,61 @@ const commands = [
         description: 'The channel to post new listings to',
         required: true,
       },
+      {
+        name: 'category',
+        type: 3, // STRING
+        description: 'Category for category-specific channel (wos_accounts, kingshot_accounts, pubg_accounts, fortnite_accounts)',
+        required: false,
+        choices: [
+          { name: 'Whiteout Survival', value: 'wos_accounts' },
+          { name: 'KingShot', value: 'kingshot_accounts' },
+          { name: 'PUBG Mobile', value: 'pubg_accounts' },
+          { name: 'Fortnite', value: 'fortnite_accounts' },
+          { name: 'TikTok', value: 'tiktok_accounts' },
+          { name: 'Instagram', value: 'instagram_accounts' },
+        ],
+      },
     ],
   },
   {
     name: 'getchannel',
     description: 'Get the current channel where listings are posted',
+    options: [
+      {
+        name: 'category',
+        type: 3, // STRING
+        description: 'Category to get channel for',
+        required: false,
+        choices: [
+          { name: 'Whiteout Survival', value: 'wos_accounts' },
+          { name: 'KingShot', value: 'kingshot_accounts' },
+          { name: 'PUBG Mobile', value: 'pubg_accounts' },
+          { name: 'Fortnite', value: 'fortnite_accounts' },
+          { name: 'TikTok', value: 'tiktok_accounts' },
+          { name: 'Instagram', value: 'instagram_accounts' },
+        ],
+      },
+    ],
   },
   {
     name: 'removechannel',
     description: 'Remove the channel configuration (disable notifications)',
+    options: [
+      {
+        name: 'category',
+        type: 3, // STRING
+        description: 'Category to remove channel for',
+        required: false,
+        choices: [
+          { name: 'Whiteout Survival', value: 'wos_accounts' },
+          { name: 'KingShot', value: 'kingshot_accounts' },
+          { name: 'PUBG Mobile', value: 'pubg_accounts' },
+          { name: 'Fortnite', value: 'fortnite_accounts' },
+          { name: 'TikTok', value: 'tiktok_accounts' },
+          { name: 'Instagram', value: 'instagram_accounts' },
+        ],
+      },
+    ],
   },
 ];
 
@@ -132,6 +210,7 @@ client.on('interactionCreate', async (interaction) => {
 
   if (commandName === 'setchannel') {
     const targetChannel = interaction.options.getChannel('channel');
+    const category = interaction.options.getString('category');
 
     if (!targetChannel) {
       return interaction.reply({
@@ -149,55 +228,78 @@ client.on('interactionCreate', async (interaction) => {
       });
     }
 
-    setChannelId(guildId, targetChannel.id);
+    setChannelId(guildId, targetChannel.id, category);
+    const categoryText = category ? ` for ${getCategoryName(category)}` : '';
 
     await interaction.reply({
-      content: `✅ New listings will now be posted to ${targetChannel}!`,
+      content: `✅ Channel set to ${targetChannel}${categoryText}. New listings will be posted here.`,
       ephemeral: true,
     });
 
     // Send a test message to confirm
     try {
-      await targetChannel.send('🎉 **Channel configured!** New listings from NXOLand will be posted here.');
+      await targetChannel.send(`🎉 **Channel configured${categoryText}!** New listings from NXOLand will be posted here.`);
     } catch (error) {
       console.error('Error sending test message:', error);
     }
   } else if (commandName === 'getchannel') {
-    const channelId = getChannelId(guildId);
+    const category = interaction.options.getString('category');
+    const channelId = getChannelId(guildId, category);
 
     if (!channelId) {
+      const categoryText = category ? ` for ${getCategoryName(category)}` : '';
       return interaction.reply({
-        content: '❌ No channel is configured. Use `/setchannel` to set one.',
+        content: `❌ No channel is configured${categoryText}. Use \`/setchannel\` to set one.`,
         ephemeral: true,
       });
     }
 
     try {
       const targetChannel = await client.channels.fetch(channelId);
+      const categoryText = category ? ` (${getCategoryName(category)})` : '';
       await interaction.reply({
-        content: `✅ Current notification channel: ${targetChannel}`,
+        content: `✅ Current notification channel${categoryText}: ${targetChannel}`,
         ephemeral: true,
       });
     } catch (error) {
       await interaction.reply({
-        content: `⚠️ Channel ID is set (${channelId}) but I cannot access it. It may have been deleted. Use `/setchannel` to update.`,
+        content: `⚠️ Channel ID is set (${channelId}) but I cannot access it. It may have been deleted. Use \`/setchannel\` to update.`,
         ephemeral: true,
       });
     }
   } else if (commandName === 'removechannel') {
+    const category = interaction.options.getString('category');
     const config = loadConfig();
-    if (config[guildId]) {
-      delete config[guildId];
+    
+    if (category) {
+      // Remove category-specific channel
+      if (!config[guildId] || !config[guildId].categoryChannels || !config[guildId].categoryChannels[category]) {
+        return interaction.reply({
+          content: `❌ No channel configured for ${getCategoryName(category)}.`,
+          ephemeral: true,
+        });
+      }
+      delete config[guildId].categoryChannels[category];
       saveConfig(config);
-      await interaction.reply({
-        content: '✅ Channel configuration removed. Notifications are now disabled.',
+      return interaction.reply({
+        content: `✅ Channel configuration removed for ${getCategoryName(category)}.`,
         ephemeral: true,
       });
     } else {
-      await interaction.reply({
-        content: '❌ No channel is configured.',
-        ephemeral: true,
-      });
+      // Remove general channel
+      if (config[guildId]) {
+        delete config[guildId];
+        saveConfig(config);
+        await interaction.reply({
+          content: '✅ Channel configuration removed. Notifications are now disabled.',
+          ephemeral: true,
+        });
+      } else {
+        await interaction.reply({
+          content: '❌ No channel is configured.',
+          ephemeral: true,
+        });
+      }
     }
   }
 });
@@ -226,29 +328,43 @@ function startWebhookServer() {
       }
 
       // Route to appropriate handler based on event type
-      switch (event_type) {
-        case 'listing.created':
-          await handleListingCreated(data);
-          break;
-        case 'listing.updated':
-        case 'listing.status_changed':
-          await handleListingUpdated(data);
-          break;
-        case 'dispute.created':
-          await handleDisputeCreated(data);
-          break;
-        case 'dispute.updated':
-          await handleDisputeUpdated(data);
-          break;
-        case 'dispute.resolved':
-          await handleDisputeResolved(data);
-          break;
-        default:
-          console.log(`Unknown event type: ${event_type}`);
-          return res.status(400).json({ error: `Unknown event type: ${event_type}` });
-      }
+      let result = null;
+      try {
+        switch (event_type) {
+          case 'listing.created':
+            await handleListingCreated(data);
+            break;
+          case 'listing.updated':
+          case 'listing.status_changed':
+            await handleListingUpdated(data);
+            break;
+          case 'dispute.created':
+            result = await handleDisputeCreated(data);
+            break;
+          case 'dispute.updated':
+            await handleDisputeUpdated(data);
+            break;
+          case 'dispute.resolved':
+            await handleDisputeResolved(data);
+            break;
+          default:
+            console.log(`Unknown event type: ${event_type}`);
+            return res.status(400).json({ error: `Unknown event type: ${event_type}` });
+        }
 
-      res.json({ success: true, event_type });
+        res.json({ 
+          success: true, 
+          event_type,
+          ...(result && { result }) // Include thread info for disputes
+        });
+      } catch (error) {
+        console.error(`Error handling ${event_type}:`, error);
+        res.status(500).json({ 
+          success: false,
+          error: error.message,
+          event_type 
+        });
+      }
     } catch (error) {
       console.error('Webhook error:', error);
       res.status(500).json({ error: 'Internal server error', message: error.message });
@@ -352,13 +468,14 @@ function startWebhookServer() {
     const listingId = listing.listing_id || listing.id;
     const title = listing.title || 'Untitled';
     const price = listing.price || 0;
-    const category = listing.category || 'N/A';
+    const category = listing.category || null;
     const description = listing.description || null;
     const images = listing.images || [];
     const createdAt = listing.created_at || new Date().toISOString();
 
     for (const [guildId, guildConfig] of Object.entries(config)) {
-      const channelId = guildConfig.channelId;
+      // Get category-specific channel or fallback to general channel
+      const channelId = getChannelId(guildId, category);
       if (!channelId) continue;
 
       try {
@@ -410,20 +527,57 @@ function startWebhookServer() {
 
   async function handleDisputeCreated(dispute) {
     const config = loadConfig();
+    const category = dispute.category || null;
     
     for (const [guildId, guildConfig] of Object.entries(config)) {
-      const channelId = guildConfig.channelId;
-      if (!channelId) continue;
+      // Get category-specific channel or fallback to general channel
+      const channelId = getChannelId(guildId, category);
+      if (!channelId) {
+        console.log(`⚠️ No channel configured for category ${category} in guild ${guildId}`);
+        continue;
+      }
 
       try {
         const discordChannel = await client.channels.fetch(channelId);
         
-        // Create a thread for the dispute
+        // Ensure channel supports threads (Text Channel or Forum Channel)
+        if (!discordChannel.isThread() && !discordChannel.threads) {
+          console.error(`❌ Channel ${channelId} does not support threads`);
+          continue;
+        }
+        
+        // Check if channel type supports private threads
+        // Private threads can only be created in Text Channels or Forum Channels
+        if (discordChannel.type !== ChannelType.GuildText && discordChannel.type !== ChannelType.GuildForum) {
+          console.error(`❌ Channel ${channelId} type (${discordChannel.type}) does not support private threads. Must be Text Channel or Forum Channel.`);
+          continue;
+        }
+        
+        // Create a PRIVATE thread for the dispute (only buyer, seller, and admins can see it)
+        // NOTE: Bot needs "Create Private Threads" permission in the channel
+        const threadName = `Dispute #${dispute.dispute_id} - Order #${dispute.order_id}${category ? ` (${getCategoryName(category)})` : ''}`;
         const thread = await discordChannel.threads.create({
-          name: `Dispute #${dispute.dispute_id} - Order #${dispute.order_id}`,
+          name: threadName,
+          type: ChannelType.PrivateThread, // Private thread - only added members and admins can see it
           autoArchiveDuration: 1440, // 24 hours
-          reason: 'New dispute created',
+          reason: 'New dispute created - private communication between buyer and seller',
         });
+
+        // Add buyer and seller to thread (they need to be able to communicate)
+        if (dispute.buyer_discord_id) {
+          try {
+            await thread.members.add(dispute.buyer_discord_id, 'Buyer added to dispute thread');
+          } catch (error) {
+            console.error(`Failed to add buyer to thread:`, error);
+          }
+        }
+        if (dispute.seller_discord_id) {
+          try {
+            await thread.members.add(dispute.seller_discord_id, 'Seller added to dispute thread');
+          } catch (error) {
+            console.error(`Failed to add seller to thread:`, error);
+          }
+        }
 
         // Mention buyer and seller if they have Discord IDs
         let mentions = [];
@@ -440,6 +594,7 @@ function startWebhookServer() {
           .addFields(
             { name: '📦 Order ID', value: `#${dispute.order_id}`, inline: true },
             { name: '👤 Initiated By', value: dispute.party === 'buyer' ? 'Buyer' : 'Seller', inline: true },
+            { name: '📂 Category', value: category ? getCategoryName(category) : 'N/A', inline: true },
             { name: '📋 Reason', value: dispute.reason || 'N/A' },
             { name: '📝 Description', value: dispute.description || 'No description provided' },
             { name: '🆔 Buyer Discord', value: dispute.buyer_discord_id ? `<@${dispute.buyer_discord_id}>` : 'Not connected', inline: true },
@@ -451,13 +606,22 @@ function startWebhookServer() {
 
         const mentionText = mentions.length > 0 ? `${mentions.join(' ')}\n\n` : '';
         await thread.send({
-          content: mentionText,
+          content: mentionText + '💬 **This is a PRIVATE thread for buyer and seller communication. Only you, the other party, and admins can see this thread.**\n\n🔒 **Privacy:** This thread is private and will not be visible to other server members.',
           embeds: [embed],
         });
 
-        console.log(`✅ Dispute #${dispute.dispute_id} thread created in channel ${channelId}`);
+        console.log(`✅ Dispute #${dispute.dispute_id} thread created in channel ${channelId} (thread ID: ${thread.id})`);
+        
+        // Return thread ID and channel ID to backend (via webhook response)
+        // The backend will need to handle this response
+        return {
+          thread_id: thread.id,
+          channel_id: channelId,
+          thread_url: `https://discord.com/channels/${guildId}/${thread.id}`,
+        };
       } catch (error) {
         console.error(`Error creating dispute thread in channel ${channelId}:`, error);
+        throw error;
       }
     }
   }
